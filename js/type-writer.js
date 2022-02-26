@@ -1,8 +1,8 @@
 class TypeMachine {
-    _actions = [];
-    _text = '';
-    _count = 0;
-    _options = {};
+    #actions = [];
+    #text = '';
+    #cursorPosition = 0;
+    #options = {};
 
     constructor(cfg) {
         const defaultOpts = {
@@ -11,8 +11,8 @@ class TypeMachine {
             },
             onStartWrite : function() {},
             onEndWrite : function() {},
-            onWrite : function(text, count) {
-                console.log(text, count);
+            onWrite : function(text, cursorPosition) {
+                console.log(text, cursorPosition);
             },
             onEnd : function() {
                 console.log("end");
@@ -21,101 +21,144 @@ class TypeMachine {
             onEndBack : function() {},
             onEndPause : function() {}
         }
-        this._options = { ...defaultOpts, ...cfg };
+        this.#options = { ...defaultOpts, ...cfg };
     }
 
-    pause(time = 0) {
+    pause(pauseTime = 0) {
         const actionPause = () => new Promise((resolve, reject) => {
             setTimeout(() => {
-                this._options.onEndPause();
+                this.#options.onEndPause();
                 resolve();
-            }, time)
+            }, pauseTime)
         });
-        this._actions.push(actionPause);
+        this.#actions.push(actionPause);
     }
 
-    _typeText(to, time = 0) {
-        this._options.onWrite(this._text.slice(0, to), to);
+    #typeText(to) {
+        this.#options.onWrite(this.#text.slice(0, to), to);
     }
 
-    write(text, time = 0) {
+    write(text, speedWriteTime = 0) {
         const actionStartWrite = () => new Promise((resolve, reject) => {
-            this._options.onStartWrite();
+            this.#options.onStartWrite();
             resolve()
         });
-        this._actions.push(actionStartWrite);
-        const actionWrite = () => new Promise((resolve, reject) => {
-            this._text += text;
+        this.#actions.push(actionStartWrite);
 
-            if (time === 0) {
-                this._count += text.length;
-                this._typeText(this._count, time)
+        const actionWrite = () => new Promise((resolve, reject) => {
+            this.#text += text;
+
+            if (speedWriteTime === 0) {
+                this.#cursorPosition += text.length;
+                this.#typeText(this.#cursorPosition, speedWriteTime)
                 resolve();
             } else {
                 const timeInt = setInterval(() => {
-                    this._count++;
-                    this._typeText(this._count, time)
-                    if (this._count >= this._text.length) {
+                    this.#cursorPosition++;
+                    this.#typeText(this.#cursorPosition, speedWriteTime)
+                    if (this.#cursorPosition >= this.#text.length) {
                         clearInterval(timeInt);
                         resolve();
                     }
-                }, time)
+                }, speedWriteTime)
             }
         });
-        this._actions.push(actionWrite);
+
+        this.#actions.push(actionWrite);
         const actionEndWrite = () => new Promise((resolve, reject) => {
-            this._options.onEndWrite();
+            this.#options.onEndWrite();
             resolve()
         });
-        this._actions.push(actionEndWrite);
+
+        this.#actions.push(actionEndWrite);
     }
 
-    back(count = 0, time = 0) {
+    setText(text) {
+        this.#text = text;
+    }
+
+    setCount(cursorPosition) {
+        if (cursorPosition === "start") this.#cursorPosition = 0;
+        if (cursorPosition === "end") this.#cursorPosition = this.#text.length;
+        if (cursorPosition !== "start" && cursorPosition !== "end" && !isNaN(cursorPosition)) {
+            this.#cursorPosition = Math.min(Math.max(cursorPosition, 0), this.#text.length);
+        }
+    }
+
+    getCount() {
+        return this.#cursorPosition;
+    }
+
+    getText() {
+        return this.#text;
+    }
+
+    back(count = 0, speedWriteTime = 0) {
         const actionStartBack = () => new Promise((resolve, reject) => {
-            this._options.onStartBack();
+            this.#options.onStartBack();
             resolve()
         });
-        this._actions.push(actionStartBack);
+        this.#actions.push(actionStartBack);
+
         const actionBack = () => new Promise((resolve, reject) => {
-            if (count === "erase") {
-                count = this._text.length;
-            }
             let tick = 0;
             const timeInt = setInterval(() => {
-                this._count--;
-                tick++;
-                this._typeText(this._count, time)
-                if (tick >= count) {
-                    this._text = this._text.substr(0, this._text.length - tick);
+                if (this.#cursorPosition > 1) {
+                    this.#cursorPosition--;
+                    tick++;
+                    this.#typeText(this.#cursorPosition, speedWriteTime)
+                    if (tick >= count) {
+                        this.#text = this.#text.substr(0, this.#text.length - tick);
+                        clearInterval(timeInt);
+                        resolve();
+                    }
+                } else {
+                    this.#text = "";
                     clearInterval(timeInt);
                     resolve();
                 }
-            }, time)
+            }, speedWriteTime)
         });
-        this._actions.push(actionBack);
+        this.#actions.push(actionBack);
+
         const actionEndBack = () => new Promise((resolve, reject) => {
-            this._options.onEndBack();
+            this.#options.onEndBack();
             resolve()
         });
-        this._actions.push(actionEndBack);
+        this.#actions.push(actionEndBack);
     }
 
-    eraseAll(time) {
-        this.back("erase", time);
+    eraseAll() {
+        const action = () => new Promise((resolve, reject) => {
+            this.#text = "";
+            this.#cursorPosition = 0;
+            resolve();
+        });
+        this.#actions.push(action);
+    }
+
+    customAction(cb) {
+        const action = () => new Promise((resolve, reject) => {
+            cb();
+            resolve();
+        });
+        this.#actions.push(action);
     }
 
     async start() {
         const actionStart = () => new Promise((resolve, reject) => {
-            this._options.onStart();
+            this.#options.onStart();
             resolve();
         });
-        this._actions.unshift(actionStart);
+        this.#actions.unshift(actionStart);
+
         const actionEnd = () => new Promise((resolve, reject) => {
-            this._options.onEnd();
+            this.#options.onEnd();
             resolve();
         });
-        this._actions.push(actionEnd);
-        for (const action of this._actions) {
+        this.#actions.push(actionEnd);
+
+        for (const action of this.#actions) {
             const a = await action();
         }
     }
